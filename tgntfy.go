@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 func ReadKeyAPI() (string, error) {
@@ -37,13 +39,15 @@ func RunChatsCmd() *ChatsCmd {
 		fs: flag.NewFlagSet("chats", flag.ContinueOnError),
 	}
 
-	chats_c.fs.Bool("verbose", false, "verbose chat list updates of telegram bot")
+	chats_c.fs.BoolVar(&chats_c.verbose, "verbose", false, "verbose chat list updates of telegram bot")
 
 	return chats_c
 }
 
 type ChatsCmd struct {
 	fs *flag.FlagSet
+
+	verbose bool
 }
 
 func (g *ChatsCmd) Name() string {
@@ -55,6 +59,7 @@ func (g *ChatsCmd) Init(args []string) error {
 }
 
 func (g *ChatsCmd) Run() error {
+
 	// Read API key from file
 	keyAPI, err := ReadKeyAPI()
 	if err != nil {
@@ -69,17 +74,97 @@ func (g *ChatsCmd) Run() error {
 	url := "https://api.telegram.org/bot" + keyAPI + "/getUpdates"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		fmt.Printf("Cannot create new request  %s, error: %v\n", url, err)
+		return err
 	}
 	// Send request
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("Error with GET request: %v\n", err)
+		return err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	fmt.Println(string(body))
+	//fmt.Println(string(body))
 
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return err
+	}
+
+	switch g.verbose {
+	case false:
+		if messages, ok := result["result"].([]interface{}); ok {
+			for _, msgi := range messages {
+				if msg, ok := msgi.(map[string]interface{}); ok {
+					if m, ok := msg["message"].(map[string]interface{}); ok {
+						if from, ok := m["from"].(map[string]interface{}); ok {
+							fmt.Println("From:")
+							if id, ok := from["id"].(float64); ok {
+								fmt.Println("     ID:", int(id))
+							}
+							if _, ok := from["first_name"].(string); ok {
+								fmt.Println("     First Name:", from["first_name"])
+							}
+							if _, ok := from["last_name"].(string); ok {
+								fmt.Println("     Last Name:", from["last_name"])
+							}
+							if _, ok := from["username"].(string); ok {
+								fmt.Println("     Username:", from["username"])
+							}
+							fmt.Println("--------------------------------------")
+						}
+					}
+				}
+			}
+		}
+	case true:
+		if messages, ok := result["result"].([]interface{}); ok {
+			for _, msgi := range messages {
+				if msg, ok := msgi.(map[string]interface{}); ok {
+					if m, ok := msg["message"].(map[string]interface{}); ok {
+						if from, ok := m["from"].(map[string]interface{}); ok {
+							fmt.Println("From:")
+							if id, ok := from["id"].(float64); ok {
+								fmt.Println("     ID: ", int(id))
+							}
+							if _, ok := from["first_name"].(string); ok {
+								fmt.Println("     First Name: ", from["first_name"])
+							}
+							if _, ok := from["last_name"].(string); ok {
+								fmt.Println("     Last Name: ", from["last_name"])
+							}
+							if _, ok := from["username"].(string); ok {
+								fmt.Println("     Username: ", from["username"])
+							}
+							if _, ok := from["is_bot"].(bool); ok {
+								fmt.Println("     Is bot: ", from["is_bot"])
+							}
+							if _, ok := from["language_code"].(string); ok {
+								fmt.Println("     Language: ", from["language_code"])
+							}
+						}
+						if chat, ok := m["chat"].(map[string]interface{}); ok {
+							fmt.Println("Chat:")
+							if _, ok := chat["username"].(string); ok {
+								fmt.Println("     Username: ", chat["username"])
+							}
+							if _, ok := chat["type"].(string); ok {
+								fmt.Println("     Type: ", chat["type"])
+							}
+						}
+						if _, ok := m["text"].(string); ok {
+							fmt.Println("     Text: ", m["text"])
+						}
+						if t, ok := m["date"].(float64); ok {
+							timestamp := time.Unix(int64(t), 0)
+							fmt.Println("     Date: ", timestamp.Local())
+						}
+						fmt.Println("--------------------------------------")
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 
