@@ -3,12 +3,12 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -34,31 +34,7 @@ func ReadKeyAPI() (string, error) {
 	return string(byteValue), nil
 }
 
-func RunChatsCmd() *ChatsCmd {
-	chats_c := &ChatsCmd{
-		fs: flag.NewFlagSet("chats", flag.ContinueOnError),
-	}
-
-	chats_c.fs.BoolVar(&chats_c.verbose, "verbose", false, "verbose chat list updates of telegram bot")
-
-	return chats_c
-}
-
-type ChatsCmd struct {
-	fs *flag.FlagSet
-
-	verbose bool
-}
-
-func (g *ChatsCmd) Name() string {
-	return g.fs.Name()
-}
-
-func (g *ChatsCmd) Init(args []string) error {
-	return g.fs.Parse(args)
-}
-
-func (g *ChatsCmd) Run() error {
+func Chats(verbose, text bool) error {
 
 	// Read API key from file
 	keyAPI, err := ReadKeyAPI()
@@ -90,9 +66,7 @@ func (g *ChatsCmd) Run() error {
 	if err != nil {
 		return err
 	}
-
-	switch g.verbose {
-	case false:
+	if !verbose && !text {
 		if messages, ok := result["result"].([]interface{}); ok {
 			for _, msgi := range messages {
 				if msg, ok := msgi.(map[string]interface{}); ok {
@@ -117,7 +91,7 @@ func (g *ChatsCmd) Run() error {
 				}
 			}
 		}
-	case true:
+	} else if verbose {
 		if messages, ok := result["result"].([]interface{}); ok {
 			for _, msgi := range messages {
 				if msg, ok := msgi.(map[string]interface{}); ok {
@@ -164,40 +138,113 @@ func (g *ChatsCmd) Run() error {
 				}
 			}
 		}
+	} else if text {
+		if messages, ok := result["result"].([]interface{}); ok {
+			for _, msgi := range messages {
+				if msg, ok := msgi.(map[string]interface{}); ok {
+					if m, ok := msg["message"].(map[string]interface{}); ok {
+						if from, ok := m["from"].(map[string]interface{}); ok {
+							fmt.Println("Message:")
+							if id, ok := from["id"].(float64); ok {
+								fmt.Println("     ID: ", int(id))
+							}
+						}
+						if _, ok := m["text"].(string); ok {
+							fmt.Println("     Text: ", m["text"])
+						}
+						fmt.Println("--------------------------------------")
+					}
+				}
+			}
+		}
 	}
 	return nil
 }
 
-type Runner interface {
-	Init([]string) error
-	Run() error
-	Name() string
-}
+func sendTlgrm(idchats []string, message string) error {
 
-func root(args []string) error {
-	if len(args) < 1 {
-		return errors.New("You must pass a sub-command")
+	// Read API key from file
+	keyAPI, err := ReadKeyAPI()
+	if err != nil {
+		return err
 	}
 
-	cmds := []Runner{
-		RunChatsCmd(),
-	}
+	retag := regexp.MustCompile(`<.*?>`)
+	resmb := regexp.MustCompile(`([_\*\[\]\(\)~\>\#\+\-\=\|\{\}\.!])`)
 
-	subcommand := os.Args[1]
+	message = retag.ReplaceAllString(message, "")
+	message = resmb.ReplaceAllString(message, "\\$1")
 
-	for _, cmd := range cmds {
-		if cmd.Name() == subcommand {
-			cmd.Init(os.Args[2:])
-			return cmd.Run()
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
+	// Send message to Telegram
+	client := &http.Client{}
+
+	url := "https://api.telegram.org/bot" + keyAPI + "/sendMessage"
+
+	for _, tgid := range idchats {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return err
 		}
+		q := req.URL.Query()
+		q.Add("parse_mode", "MarkdownV2")
+		q.Add("chat_id", tgid)
+		q.Add("disable_web_page_preview", "1")
+		q.Add("text", message)
+		req.URL.RawQuery = q.Encode()
+		// Отправляем запрос
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode > 299 {
+			fmt.Println("Message with was not sent")
+			fmt.Println("message: ", message)
+			fmt.Println("Error: ", err)
+			return err
+		}
+		defer resp.Body.Close()
 	}
-
-	return fmt.Errorf("Unknown subcommand: %s", subcommand)
+	return nil
 }
 
 func main() {
-	if err := root(os.Args[1:]); err != nil {
-		fmt.Println(err)
+	// Chats sub-command parameters
+	chatsCmd := flag.NewFlagSet("chats", flag.ExitOnError)
+	chatsVerbose := chatsCmd.Bool("verbose", false, "verbose chat list updates of telegram bot")
+	chatsText := chatsCmd.Bool("text", false, "Onle text and id chat of telegram bot")
+
+	// Send sub-command parameters
+	sendCmd := flag.NewFlagSet("send", flag.ExitOnError)
+	sendIds := sendCmd.String("ids", "", "Chat IDs comma separated")
+	sendMsg := sendCmd.String("text", "", "Message text")
+
+	if len(os.Args) < 2 {
+		fmt.Println("expected 'chats' or 'send' subcommands")
+		os.Exit(1)
+	}
+
+	switch os.Args[1] {
+	case "chats":
+		chatsCmd.Parse(os.Args[2:])
+		if *chatsVerbose && *chatsText {
+			fmt.Println("Parameters 'verbose' and 'text' cannot be true at the same time")
+			os.Exit(1)
+		}
+		err := Chats(*chatsVerbose, *chatsText)
+		if err != nil {
+			fmt.Println(err)
+		}
+	case "send":
+		sendCmd.Parse(os.Args[2:])
+		idchats := strings.Split(*sendIds, ",")
+		err := sendTlgrm(idchats, *sendMsg)
+		if err != nil {
+			fmt.Println(err)
+		}
+	default:
+		fmt.Println("expected 'chats' or 'send' subcommands")
 		os.Exit(1)
 	}
 }
