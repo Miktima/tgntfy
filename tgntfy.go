@@ -163,17 +163,31 @@ func Chats(verbose, text bool) error {
 
 func sendTlgrm(idchats []string, message string) error {
 
+	const bold string = "2d5fef6c87f16217aa1b50e1ebc89720"
+	const br string = "8b0f0ea73162b7552dda3c149b6c045d"
+	const italic string = "3c4abf728013d2a85b9fd0e44dbc2353"
+
 	// Read API key from file
 	keyAPI, err := ReadKeyAPI()
 	if err != nil {
 		return err
 	}
-
-	retag := regexp.MustCompile(`<.*?>`)
+	reBold := regexp.MustCompile(`<[\/]?b>`)
+	reBr := regexp.MustCompile(`<br>`)
+	reItalic := regexp.MustCompile(`<[\/]?i>`)
+	retag := regexp.MustCompile(`<.*>?`)
 	resmb := regexp.MustCompile(`([_\*\[\]\(\)~\>\#\+\-\=\|\{\}\.!])`)
 
+	message = reBold.ReplaceAllString(message, bold)
+	message = reBr.ReplaceAllString(message, br)
+	message = reItalic.ReplaceAllString(message, italic)
 	message = retag.ReplaceAllString(message, "")
+
 	message = resmb.ReplaceAllString(message, "\\$1")
+
+	message = strings.ReplaceAll(message, bold, "*")
+	message = strings.ReplaceAll(message, br, "\n")
+	message = strings.ReplaceAll(message, italic, "_")
 
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
